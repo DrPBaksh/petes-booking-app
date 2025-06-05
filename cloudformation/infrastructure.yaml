@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Pete's Booking Page - Complete AWS Infrastructure'
+Description: 'Pete Booking Page - Complete AWS Infrastructure'
 
 Parameters:
   Environment:
@@ -61,7 +61,7 @@ Resources:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub 'petes-booking-api-${Environment}'
-      Description: 'API for Pete''s Booking Page'
+      Description: 'API for Pete Booking Page'
       EndpointConfiguration:
         Types:
           - REGIONAL
