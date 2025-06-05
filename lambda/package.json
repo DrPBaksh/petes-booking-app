@@ -1,0 +1,20 @@
+{
+  "name": "petes-booking-lambda",
+  "version": "1.0.0",
+  "description": "Lambda functions for Pete's Booking Page",
+  "main": "bookings.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "uuid": "^9.0.0"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "booking",
+    "nodejs"
+  ],
+  "author": "Pete",
+  "license": "MIT"
+}
