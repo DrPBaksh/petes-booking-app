@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pete's Booking Page</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .hero-section {
+            position: relative;
+            background: linear-gradient(rgba(0,0,0,0.4), rgba(0,0,0,0.4)), 
+                        url('https://images.pexels.com/photos/1181533/pexels-photo-1181533.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&fit=crop') center/cover;
+            height: 40vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-align: center;
+        }
+
+        .hero-content h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            animation: fadeInUp 1s ease-out;
+        }
+
+        .hero-content p {
+            font-size: 1.3rem;
+            opacity: 0.9;
+            animation: fadeInUp 1s ease-out 0.3s both;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .glassmorphism {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 2rem;
+            margin: 2rem 0;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .nav-tabs {
+            display: flex;
+            margin-bottom: 2rem;
+            border-radius: 15px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .nav-tab {
+            flex: 1;
+            padding: 1rem 2rem;
+            background: transparent;
+            border: none;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .nav-tab.active {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .nav-tab:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .meeting-card {
+            background: linear-gradient(145deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+            border-radius: 15px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .meeting-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1);
+        }
+
+        .meeting-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+        }
+
+        .meeting-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .meeting-title {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 0.5rem;
+        }
+
+        .meeting-date {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            color: white;
+            font-weight: 500;
+        }
+
+        .meeting-details {
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 1rem;
+            line-height: 1.6;
+        }
+
+        .meeting-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding: 0.8rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .stat-item {
+            text-align: center;
+            color: white;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+
+        .booking-form {
+            display: flex;
+            gap: 0.8rem;
+            align-items: center;
+        }
+
+        .email-input {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .email-input::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .email-input:focus {
+            outline: none;
+            border-color: #4ecdc4;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn {
+            padding: 0.8rem 1.5rem;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+            color: white;
+        }
+
+        .btn-admin {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .admin-section {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            border-radius: 20px;
+            padding: 2rem;
+        }
+
+        .admin-header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #eee;
+        }
+
+        .admin-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 0.8rem;
+            border: 2px solid #e1e1e1;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #4ecdc4;
+        }
+
+        .success-message {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            animation: slideInDown 0.5s ease-out;
+        }
+
+        .error-message {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
+            color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            animation: slideInDown 0.5s ease-out;
+        }
+
+        @keyframes slideInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: linear-gradient(145deg, #f0f0f0, #e6e6e6);
+            padding: 1.5rem;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #333;
+            display: block;
+        }
+
+        .stat-text {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        .bookings-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .bookings-table th,
+        .bookings-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .bookings-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .bookings-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .password-form {
+            max-width: 400px;
+            margin: 2rem auto;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            text-align: center;
+        }
+
+        .floating-action {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .floating-action:hover {
+            transform: scale(1.1);
+        }
+
+        @media (max-width: 768px) {
+            .hero-content h1 {
+                font-size: 2.5rem;
+            }
+            
+            .container {
+                padding: 1rem;
+            }
+            
+            .calendar-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .nav-tab {
+                padding: 0.8rem 1rem;
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Configuration - Will be replaced by deploy script
+        const API_BASE_URL = window.location.hostname === 'localhost' 
+            ? 'https://your-api-gateway-url.execute-api.region.amazonaws.com/dev'
+            : '%API_BASE_URL%';
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('booking');
+            const [meetings, setMeetings] = useState([]);
+            const [bookings, setBookings] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [message, setMessage] = useState(null);
+            const [adminPassword, setAdminPassword] = useState('');
+            const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+            const [adminStats, setAdminStats] = useState(null);
+
+            useEffect(() => {
+                loadMeetings();
+            }, []);
+
+            useEffect(() => {
+                if (isAdminAuthenticated) {
+                    loadBookings();
+                    loadAdminStats();
+                }
+            }, [isAdminAuthenticated]);
+
+            const showMessage = (text, type = 'success') => {
+                setMessage({ text, type });
+                setTimeout(() => setMessage(null), 5000);
+            };
+
+            const loadMeetings = async () => {
+                try {
+                    setLoading(true);
+                    const response = await fetch(`${API_BASE_URL}/meetings`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setMeetings(data);
+                    }
+                } catch (error) {
+                    console.error('Error loading meetings:', error);
+                    showMessage('Failed to load meetings', 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const loadBookings = async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/bookings`, {
+                        headers: {
+                            'X-Admin-Password': adminPassword
+                        }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        setBookings(data);
+                    }
+                } catch (error) {
+                    console.error('Error loading bookings:', error);
+                }
+            };
+
+            const loadAdminStats = async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/admin?password=${adminPassword}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setAdminStats(data);
+                    }
+                } catch (error) {
+                    console.error('Error loading admin stats:', error);
+                }
+            };
+
+            const bookMeeting = async (meetingId, email) => {
+                try {
+                    setLoading(true);
+                    const response = await fetch(`${API_BASE_URL}/bookings`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ meetingId, email })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        showMessage(data.message);
+                        loadMeetings(); // Refresh to update attendee counts
+                    } else {
+                        showMessage(data.error, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error booking meeting:', error);
+                    showMessage('Failed to book meeting', 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const createMeeting = async (meetingData) => {
+                try {
+                    setLoading(true);
+                    const response = await fetch(`${API_BASE_URL}/meetings`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Password': adminPassword
+                        },
+                        body: JSON.stringify(meetingData)
+                    });
+
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        showMessage('Meeting created successfully!');
+                        loadMeetings();
+                        loadAdminStats();
+                    } else {
+                        showMessage(data.error, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error creating meeting:', error);
+                    showMessage('Failed to create meeting', 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const deleteBooking = async (bookingId) => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/bookings/${bookingId}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'X-Admin-Password': adminPassword
+                        }
+                    });
+
+                    if (response.ok) {
+                        showMessage('Booking removed successfully!');
+                        loadBookings();
+                        loadMeetings();
+                        loadAdminStats();
+                    } else {
+                        const data = await response.json();
+                        showMessage(data.error, 'error');
+                    }
+                } catch (error) {
+                    console.error('Error deleting booking:', error);
+                    showMessage('Failed to remove booking', 'error');
+                }
+            };
+
+            const exportData = async (type = 'bookings') => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/admin/export?type=${type}&password=${adminPassword}`);
+                    
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${type}-export-${new Date().toISOString().split('T')[0]}.csv`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                        showMessage(`${type} data exported successfully!`);
+                    } else {
+                        showMessage('Failed to export data', 'error');
+                    }
+                } catch (error) {
+                    console.error('Error exporting data:', error);
+                    showMessage('Failed to export data', 'error');
+                }
+            };
+
+            const authenticateAdmin = () => {
+                if (adminPassword === 'Skiing12!') {
+                    setIsAdminAuthenticated(true);
+                    showMessage('Admin access granted!');
+                } else {
+                    showMessage('Invalid admin password', 'error');
+                }
+            };
+
+            const formatDate = (date, time) => {
+                const dateObj = new Date(`${date}T${time}`);
+                return dateObj.toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            };
+
+            const MeetingCard = ({ meeting }) => {
+                const [email, setEmail] = useState('');
+                const isFull = meeting.maxAttendees && meeting.currentAttendees >= meeting.maxAttendees;
+                
+                const handleSubmit = (e) => {
+                    e.preventDefault();
+                    if (email) {
+                        bookMeeting(meeting.id, email);
+                        setEmail('');
+                    }
+                };
+
+                return (
+                    <div className="meeting-card">
+                        <div className="meeting-header">
+                            <div>
+                                <h3 className="meeting-title">{meeting.title}</h3>
+                                <div className="meeting-date">
+                                    {formatDate(meeting.date, meeting.time)}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="meeting-details">
+                            <p><i className="fas fa-clock"></i> Duration: {meeting.duration} minutes</p>
+                            {meeting.location && <p><i className="fas fa-map-marker-alt"></i> {meeting.location}</p>}
+                            {meeting.description && <p><i className="fas fa-info-circle"></i> {meeting.description}</p>}
+                        </div>
+
+                        <div className="meeting-stats">
+                            <div className="stat-item">
+                                <span className="stat-value">{meeting.currentAttendees}</span>
+                                <span className="stat-label">Attendees</span>
+                            </div>
+                            <div className="stat-item">
+                                <span className="stat-value">
+                                    {meeting.maxAttendees ? meeting.spotsRemaining : '∞'}
+                                </span>
+                                <span className="stat-label">Spots Left</span>
+                            </div>
+                            <div className="stat-item">
+                                <span className="stat-value">{meeting.duration}m</span>
+                                <span className="stat-label">Duration</span>
+                            </div>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="booking-form">
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="Enter your email"
+                                className="email-input"
+                                disabled={isFull || loading}
+                                required
+                            />
+                            <button 
+                                type="submit" 
+                                className={`btn ${isFull ? 'btn-secondary' : 'btn-primary'}`}
+                                disabled={isFull || loading}
+                            >
+                                {loading ? <div className="loading"></div> : 
+                                 isFull ? 'Full' : 'Book'}
+                            </button>
+                        </form>
+                    </div>
+                );
+            };
+
+            const AdminForm = () => {
+                const [formData, setFormData] = useState({
+                    title: '',
+                    description: '',
+                    date: '',
+                    time: '',
+                    duration: '',
+                    location: '',
+                    minAttendees: '',
+                    maxAttendees: ''
+                });
+
+                const handleSubmit = (e) => {
+                    e.preventDefault();
+                    createMeeting(formData);
+                    setFormData({
+                        title: '',
+                        description: '',
+                        date: '',
+                        time: '',
+                        duration: '',
+                        location: '',
+                        minAttendees: '',
+                        maxAttendees: ''
+                    });
+                };
+
+                return (
+                    <form onSubmit={handleSubmit}>
+                        <div className="admin-grid">
+                            <div>
+                                <div className="form-group">
+                                    <label className="form-label">Meeting Title *</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        value={formData.title}
+                                        onChange={(e) => setFormData({...formData, title: e.target.value})}
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Description</label>
+                                    <textarea
+                                        className="form-input"
+                                        rows="3"
+                                        value={formData.description}
+                                        onChange={(e) => setFormData({...formData, description: e.target.value})}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Location</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        value={formData.location}
+                                        onChange={(e) => setFormData({...formData, location: e.target.value})}
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <div className="form-group">
+                                    <label className="form-label">Date *</label>
+                                    <input
+                                        type="date"
+                                        className="form-input"
+                                        value={formData.date}
+                                        onChange={(e) => setFormData({...formData, date: e.target.value})}
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Time *</label>
+                                    <input
+                                        type="time"
+                                        className="form-input"
+                                        value={formData.time}
+                                        onChange={(e) => setFormData({...formData, time: e.target.value})}
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Duration (minutes) *</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={formData.duration}
+                                        onChange={(e) => setFormData({...formData, duration: e.target.value})}
+                                        min="1"
+                                        required
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Min Attendees</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={formData.minAttendees}
+                                        onChange={(e) => setFormData({...formData, minAttendees: e.target.value})}
+                                        min="0"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Max Attendees</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={formData.maxAttendees}
+                                        onChange={(e) => setFormData({...formData, maxAttendees: e.target.value})}
+                                        min="1"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <button type="submit" className="btn btn-primary" disabled={loading}>
+                            {loading ? <div className="loading"></div> : <>
+                                <i className="fas fa-plus"></i> Create Meeting
+                            </>}
+                        </button>
+                    </form>
+                );
+            };
+
+            return (
+                <div>
+                    <div className="hero-section">
+                        <div className="hero-content">
+                            <h1>Pete's Booking Page</h1>
+                            <p>Professional meeting scheduling made simple</p>
+                        </div>
+                    </div>
+
+                    <div className="container">
+                        {message && (
+                            <div className={`${message.type === 'error' ? 'error-message' : 'success-message'}`}>
+                                <i className={`fas ${message.type === 'error' ? 'fa-exclamation-triangle' : 'fa-check-circle'}`}></i>
+                                {message.text}
+                            </div>
+                        )}
+
+                        <div className="glassmorphism">
+                            <div className="nav-tabs">
+                                <button 
+                                    className={`nav-tab ${activeTab === 'booking' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('booking')}
+                                >
+                                    <i className="fas fa-calendar-plus"></i> Book Meeting
+                                </button>
+                                <button 
+                                    className={`nav-tab ${activeTab === 'admin' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('admin')}
+                                >
+                                    <i className="fas fa-cog"></i> Admin Panel
+                                </button>
+                            </div>
+
+                            {activeTab === 'booking' && (
+                                <div>
+                                    <h2 style={{color: 'white', marginBottom: '1rem', textAlign: 'center'}}>
+                                        Available Meetings
+                                    </h2>
+                                    {loading && meetings.length === 0 ? (
+                                        <div style={{textAlign: 'center', color: 'white', padding: '2rem'}}>
+                                            <div className="loading" style={{margin: '0 auto'}}></div>
+                                            <p style={{marginTop: '1rem'}}>Loading meetings...</p>
+                                        </div>
+                                    ) : meetings.length === 0 ? (
+                                        <div style={{textAlign: 'center', color: 'white', padding: '2rem'}}>
+                                            <i className="fas fa-calendar-times" style={{fontSize: '3rem', marginBottom: '1rem', opacity: 0.5}}></i>
+                                            <p>No meetings available yet.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="calendar-grid">
+                                            {meetings.map(meeting => (
+                                                <MeetingCard key={meeting.id} meeting={meeting} />
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'admin' && !isAdminAuthenticated && (
+                                <div className="password-form">
+                                    <h2>Admin Access</h2>
+                                    <p style={{marginBottom: '1rem', color: '#666'}}>Enter admin password to continue</p>
+                                    <div className="form-group">
+                                        <input
+                                            type="password"
+                                            className="form-input"
+                                            placeholder="Admin Password"
+                                            value={adminPassword}
+                                            onChange={(e) => setAdminPassword(e.target.value)}
+                                            onKeyPress={(e) => e.key === 'Enter' && authenticateAdmin()}
+                                        />
+                                    </div>
+                                    <button onClick={authenticateAdmin} className="btn btn-admin">
+                                        <i className="fas fa-unlock"></i> Access Admin Panel
+                                    </button>
+                                </div>
+                            )}
+
+                            {activeTab === 'admin' && isAdminAuthenticated && (
+                                <div className="admin-section">
+                                    <div className="admin-header">
+                                        <h2>Admin Dashboard</h2>
+                                        <p>Manage meetings and view analytics</p>
+                                    </div>
+
+                                    {adminStats && (
+                                        <div className="stats-grid">
+                                            <div className="stat-card">
+                                                <span className="stat-number">{adminStats.overview.totalMeetings}</span>
+                                                <span className="stat-text">Total Meetings</span>
+                                            </div>
+                                            <div className="stat-card">
+                                                <span className="stat-number">{adminStats.overview.totalBookings}</span>
+                                                <span className="stat-text">Total Bookings</span>
+                                            </div>
+                                            <div className="stat-card">
+                                                <span className="stat-number">{adminStats.overview.uniqueAttendees}</span>
+                                                <span className="stat-text">Unique Attendees</span>
+                                            </div>
+                                            <div className="stat-card">
+                                                <span className="stat-number">{adminStats.overview.upcomingMeetings}</span>
+                                                <span className="stat-text">Upcoming Meetings</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div style={{marginBottom: '2rem'}}>
+                                        <h3>Export Data</h3>
+                                        <div style={{display: 'flex', gap: '1rem', marginTop: '1rem'}}>
+                                            <button onClick={() => exportData('bookings')} className="btn btn-primary">
+                                                <i className="fas fa-download"></i> Export Bookings
+                                            </button>
+                                            <button onClick={() => exportData('meetings')} className="btn btn-primary">
+                                                <i className="fas fa-download"></i> Export Meetings
+                                            </button>
+                                            <button onClick={() => exportData('combined')} className="btn btn-primary">
+                                                <i className="fas fa-download"></i> Export All
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div style={{marginBottom: '2rem'}}>
+                                        <h3>Create New Meeting</h3>
+                                        <AdminForm />
+                                    </div>
+
+                                    {bookings.length > 0 && (
+                                        <div>
+                                            <h3>Current Bookings</h3>
+                                            <div style={{overflowX: 'auto'}}>
+                                                <table className="bookings-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Email</th>
+                                                            <th>Meeting</th>
+                                                            <th>Date</th>
+                                                            <th>Booked At</th>
+                                                            <th>Actions</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {bookings.map(booking => {
+                                                            const meeting = meetings.find(m => m.id === booking.meetingId);
+                                                            return (
+                                                                <tr key={booking.id}>
+                                                                    <td>{booking.email}</td>
+                                                                    <td>{booking.meetingTitle}</td>
+                                                                    <td>{meeting ? formatDate(meeting.date, meeting.time) : 'N/A'}</td>
+                                                                    <td>{new Date(booking.bookedAt).toLocaleDateString()}</td>
+                                                                    <td>
+                                                                        <button 
+                                                                            onClick={() => deleteBooking(booking.id)}
+                                                                            className="btn btn-secondary"
+                                                                            style={{padding: '0.3rem 0.8rem', fontSize: '0.8rem'}}
+                                                                        >
+                                                                            <i className="fas fa-trash"></i> Remove
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {!isAdminAuthenticated && activeTab === 'booking' && (
+                        <button 
+                            className="floating-action"
+                            onClick={() => setActiveTab('admin')}
+                            title="Admin Access"
+                        >
+                            <i className="fas fa-cog"></i>
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
