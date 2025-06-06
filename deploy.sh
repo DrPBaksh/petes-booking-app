@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Pete's Booking App - One Command Deploy Script
-# This script deploys the entire application to AWS
+# Pete's Booking App - Enhanced Deployment Script
+# This script deploys the entire application to AWS with robust error handling
 
 set -e  # Exit on any error
 
@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 STACK_NAME="petes-booking-app"
 ENVIRONMENT="dev"
 REGION="us-east-1"
+MAX_RETRIES=3
 
 # Functions for colored output
 info() {
@@ -38,6 +39,96 @@ header() {
     echo -e "\n${BLUE}🚀 $1${NC}\n"
 }
 
+# Function to retry commands
+retry() {
+    local retries=$1
+    shift
+    local count=0
+    until "$@"; do
+        exit=$?
+        wait=$((2 ** count))
+        count=$((count + 1))
+        if [ $count -lt $retries ]; then
+            warning "Command failed. Retrying in ${wait}s... (attempt $count/$retries)"
+            sleep $wait
+        else
+            error "Command failed after $retries attempts."
+            return $exit
+        fi
+    done
+    return 0
+}
+
+# Function to check if stack exists
+stack_exists() {
+    aws cloudformation describe-stacks --stack-name "$1" --region "$REGION" > /dev/null 2>&1
+}
+
+# Function to wait for stack operation to complete
+wait_for_stack() {
+    local stack_name=$1
+    local operation=$2
+    
+    info "Waiting for stack $operation to complete..."
+    
+    while true; do
+        local status=$(aws cloudformation describe-stacks \
+            --stack-name "$stack_name" \
+            --query 'Stacks[0].StackStatus' \
+            --output text \
+            --region "$REGION" 2>/dev/null || echo "NOT_FOUND")
+        
+        case $status in
+            *_COMPLETE)
+                success "Stack $operation completed successfully"
+                return 0
+                ;;
+            *_FAILED|*ROLLBACK_COMPLETE)
+                error "Stack $operation failed with status: $status"
+                return 1
+                ;;
+            DELETE_IN_PROGRESS)
+                info "Stack deletion in progress..."
+                sleep 10
+                ;;
+            *_IN_PROGRESS)
+                info "Stack operation in progress (status: $status)..."
+                sleep 15
+                ;;
+            NOT_FOUND)
+                if [ "$operation" = "deletion" ]; then
+                    success "Stack deleted successfully"
+                    return 0
+                else
+                    warning "Stack not found"
+                    return 1
+                fi
+                ;;
+            *)
+                info "Current status: $status"
+                sleep 10
+                ;;
+        esac
+    done
+}
+
+# Function to clean up failed stack
+cleanup_failed_stack() {
+    if stack_exists "$STACK_NAME"; then
+        local status=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' \
+            --output text \
+            --region "$REGION")
+        
+        if [[ "$status" == *"FAILED"* ]] || [[ "$status" == "ROLLBACK_COMPLETE" ]]; then
+            warning "Found failed stack with status: $status. Cleaning up..."
+            aws cloudformation delete-stack --stack-name "$STACK_NAME" --region "$REGION"
+            wait_for_stack "$STACK_NAME" "deletion"
+        fi
+    fi
+}
+
 # Check prerequisites
 check_prerequisites() {
     header "Checking Prerequisites"
@@ -52,9 +143,15 @@ check_prerequisites() {
     if ! command -v jq &> /dev/null; then
         warning "jq is not installed. Installing it..."
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            brew install jq
+            brew install jq 2>/dev/null || {
+                error "Failed to install jq via brew. Please install manually."
+                exit 1
+            }
         elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            sudo apt-get update && sudo apt-get install -y jq
+            sudo apt-get update && sudo apt-get install -y jq 2>/dev/null || {
+                error "Failed to install jq. Please install manually."
+                exit 1
+            }
         else
             error "Please install jq manually and run the script again."
             exit 1
@@ -93,7 +190,7 @@ prepare_lambda_packages() {
     cd lambda
     if [ -f package.json ]; then
         info "Installing Lambda dependencies..."
-        npm install --production
+        retry $MAX_RETRIES npm install --production
     fi
     cd ..
     
@@ -129,10 +226,13 @@ prepare_lambda_packages() {
 deploy_infrastructure() {
     header "Deploying AWS Infrastructure"
     
+    # Clean up any failed stacks first
+    cleanup_failed_stack
+    
     info "Deploying CloudFormation stack: $STACK_NAME"
     
-    # Deploy the stack
-    aws cloudformation deploy \
+    # Deploy the stack with retry
+    retry $MAX_RETRIES aws cloudformation deploy \
         --template-file cloudformation/infrastructure.yaml \
         --stack-name $STACK_NAME \
         --parameter-overrides Environment=$ENVIRONMENT \
@@ -143,6 +243,16 @@ deploy_infrastructure() {
         success "CloudFormation stack deployed successfully"
     else
         error "Failed to deploy CloudFormation stack"
+        
+        # Show stack events on failure
+        if stack_exists "$STACK_NAME"; then
+            warning "Showing recent stack events..."
+            aws cloudformation describe-stack-events \
+                --stack-name $STACK_NAME \
+                --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' \
+                --output table \
+                --region $AWS_REGION 2>/dev/null || true
+        fi
         exit 1
     fi
     
@@ -189,21 +299,21 @@ update_lambda_functions() {
     
     # Update bookings function
     info "Updating bookings Lambda function..."
-    aws lambda update-function-code \
+    retry $MAX_RETRIES aws lambda update-function-code \
         --function-name $BOOKINGS_FUNCTION \
         --zip-file fileb://.deploy/lambda/bookings.zip \
         --region $AWS_REGION > /dev/null
     
     # Update meetings function
     info "Updating meetings Lambda function..."
-    aws lambda update-function-code \
+    retry $MAX_RETRIES aws lambda update-function-code \
         --function-name $MEETINGS_FUNCTION \
         --zip-file fileb://.deploy/lambda/meetings.zip \
         --region $AWS_REGION > /dev/null
     
     # Update admin function
     info "Updating admin Lambda function..."
-    aws lambda update-function-code \
+    retry $MAX_RETRIES aws lambda update-function-code \
         --function-name $ADMIN_FUNCTION \
         --zip-file fileb://.deploy/lambda/admin.zip \
         --region $AWS_REGION > /dev/null
@@ -224,7 +334,7 @@ prepare_frontend() {
     success "Frontend prepared with API URL: $API_URL"
 }
 
-# Create S3 bucket for frontend hosting (optional)
+# Create S3 bucket for frontend hosting with proper configuration
 setup_frontend_hosting() {
     header "Setting up Frontend Hosting"
     
@@ -233,19 +343,27 @@ setup_frontend_hosting() {
     
     info "Creating S3 bucket for frontend hosting: $FRONTEND_BUCKET"
     
-    # Create bucket
-    aws s3 mb s3://$FRONTEND_BUCKET --region $AWS_REGION 2>/dev/null || true
+    # Create bucket (ignore error if it already exists)
+    aws s3 mb s3://$FRONTEND_BUCKET --region $AWS_REGION 2>/dev/null || {
+        warning "Bucket already exists or could not be created"
+    }
     
     # Configure bucket for static website hosting
-    aws s3 website s3://$FRONTEND_BUCKET \
+    retry $MAX_RETRIES aws s3 website s3://$FRONTEND_BUCKET \
         --index-document index.html \
         --error-document index.html
     
-    # Upload frontend
-    aws s3 cp .deploy/frontend/index.html s3://$FRONTEND_BUCKET/index.html \
-        --content-type "text/html"
+    # Update public access block settings for website hosting
+    info "Configuring bucket public access settings..."
+    aws s3api put-public-access-block \
+        --bucket $FRONTEND_BUCKET \
+        --public-access-block-configuration \
+        BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false \
+        2>/dev/null || {
+        warning "Could not update public access block settings"
+    }
     
-    # Make bucket public for website hosting
+    # Create bucket policy for public read access
     cat > .deploy/bucket-policy.json << EOF
 {
     "Version": "2012-10-17",
@@ -261,9 +379,15 @@ setup_frontend_hosting() {
 }
 EOF
     
-    aws s3api put-bucket-policy \
+    # Apply bucket policy with retry
+    retry $MAX_RETRIES aws s3api put-bucket-policy \
         --bucket $FRONTEND_BUCKET \
         --policy file://.deploy/bucket-policy.json
+    
+    # Upload frontend
+    info "Uploading frontend files..."
+    retry $MAX_RETRIES aws s3 cp .deploy/frontend/index.html s3://$FRONTEND_BUCKET/index.html \
+        --content-type "text/html"
     
     # Get website URL
     export WEBSITE_URL="http://${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
@@ -316,22 +440,29 @@ initialize_sample_data() {
     
     info "Creating sample meeting..."
     
-    # Create a sample meeting
-    curl -X POST "$API_URL/meetings" \
+    # Wait a moment for the API to be ready
+    sleep 5
+    
+    # Create a sample meeting with proper error handling
+    local sample_date=$(date -d "+7 days" +%Y-%m-%d 2>/dev/null || date -v+7d +%Y-%m-%d 2>/dev/null || echo "2025-06-15")
+    
+    curl -s -X POST "$API_URL/meetings" \
         -H "Content-Type: application/json" \
         -H "X-Admin-Password: Skiing12!" \
-        -d '{
-            "title": "Welcome Meeting",
-            "description": "Introduction to Pete'\''s Booking System",
-            "date": "'$(date -d "+7 days" +%Y-%m-%d)'",
-            "time": "14:00",
-            "duration": 60,
-            "location": "Conference Room A",
-            "minAttendees": 1,
-            "maxAttendees": 10
-        }' > /dev/null 2>&1
-    
-    success "Sample meeting created"
+        -d "{
+            \"title\": \"Welcome Meeting\",
+            \"description\": \"Introduction to Pete's Booking System\",
+            \"date\": \"$sample_date\",
+            \"time\": \"14:00\",
+            \"duration\": 60,
+            \"location\": \"Conference Room A\",
+            \"minAttendees\": 1,
+            \"maxAttendees\": 10
+        }" > /dev/null 2>&1 && {
+        success "Sample meeting created"
+    } || {
+        warning "Could not create sample meeting (API may need a moment to initialize)"
+    }
 }
 
 # Cleanup temporary files
@@ -348,7 +479,7 @@ main() {
     echo -e "${GREEN}"
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║                   Pete's Booking App                         ║"
-    echo "║               One Command Deployment                         ║"
+    echo "║            Enhanced One Command Deployment                   ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
@@ -383,14 +514,15 @@ main() {
     echo -e "   • Frontend deployed to S3 bucket"
     echo -e "   • All AWS resources provisioned"
     
-    echo -e "\n${YELLOW}💡 Tips:${NC}"
-    echo -e "   • All configuration is stored in the .env file"
-    echo -e "   • The frontend automatically connects to your API"
-    echo -e "   • Admin password is 'Skiing12!' (configurable in CloudFormation)"
-    echo -e "   • Data is stored in S3 bucket: $BUCKET_NAME"
+    echo -e "\n${BLUE}🧹 Cleanup:${NC}"
+    echo -e "   • Run ${GREEN}./cleanup.sh${NC} to remove all AWS resources"
+    echo -e "   • Run ${GREEN}./deploy.sh${NC} again to redeploy if needed"
     
     echo -e "\n${GREEN}✨ Your Pete's Booking App is ready to use! ✨${NC}\n"
 }
+
+# Handle script interruption
+trap 'error "Deployment interrupted"; cleanup; exit 1' INT TERM
 
 # Run the main function
 main
