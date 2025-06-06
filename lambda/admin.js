@@ -1,26 +1,27 @@
-const AWS = require('aws-sdk');
-const s3 = new AWS.S3();
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 
+const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Password',
 };
 
 // Helper function to get data from S3
 async function getS3Data(key) {
     try {
-        const params = {
+        const command = new GetObjectCommand({
             Bucket: BUCKET_NAME,
             Key: key
-        };
-        const result = await s3.getObject(params).promise();
-        return JSON.parse(result.Body.toString());
+        });
+        const result = await s3Client.send(command);
+        const bodyContents = await result.Body.transformToString();
+        return JSON.parse(bodyContents);
     } catch (error) {
-        if (error.statusCode === 404) {
+        if (error.name === 'NoSuchKey') {
             return null;
         }
         throw error;
@@ -343,7 +344,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: corsHeaders,
-            body: JSON.stringify({ error: 'Internal server error' })
+            body: JSON.stringify({ error: 'Internal server error: ' + error.message })
         };
     }
 };
