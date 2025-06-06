@@ -28,7 +28,7 @@ Resources:
             AllowedOrigins: ['*']
             MaxAge: 3000
 
-  # S3 Bucket Policy for public read access
+  # S3 Bucket Policy for public read access (FIXED ARN)
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -39,7 +39,7 @@ Resources:
             Effect: Allow
             Principal: '*'
             Action: 's3:GetObject'
-            Resource: !Sub '${WebsiteBucket}/*'
+            Resource: !Sub '${WebsiteBucket.Arn}/*'
 
   # CloudFront Origin Access Control
   OriginAccessControl:
