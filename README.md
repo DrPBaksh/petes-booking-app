@@ -25,7 +25,7 @@ A professional, modern meeting booking application with AWS backend and stunning
 - **Frontend**: Modern React with glassmorphism design
 - **Backend**: AWS Lambda + API Gateway + S3
 - **Infrastructure**: CloudFormation for complete AWS setup
-- **Deployment**: One-command deployment script
+- **Deployment**: One-command deployment script with robust error handling
 - **Security**: IAM roles, CORS, input validation
 
 ## 🚀 Quick Start
@@ -35,26 +35,60 @@ A professional, modern meeting booking application with AWS backend and stunning
 - Node.js (for Lambda dependencies)
 - Basic terminal/command line access
 
-### One-Command Deployment
+### ⚡ Current Deployment (If you have issues)
+
+If your deployment got stuck on S3 bucket policy issues, run:
+
+```bash
+git pull origin main
+chmod +x complete-deployment.sh
+./complete-deployment.sh
+```
+
+**Your app is already working at:**
+**http://petes-booking-app-frontend-338971307797-dev.s3-website-us-east-1.amazonaws.com**
+
+### 🆕 Fresh Deployment
 
 ```bash
 # Clone the repository
 git clone https://github.com/DrPBaksh/petes-booking-app.git
 cd petes-booking-app
 
-# Make the deploy script executable and run it
-chmod +x deploy.sh
+# Make scripts executable and deploy
+chmod +x *.sh
 ./deploy.sh
 ```
 
-That's it! The script will:
-1. ✅ Check prerequisites
-2. ✅ Build Lambda packages
-3. ✅ Deploy AWS infrastructure
-4. ✅ Update Lambda functions
-5. ✅ Deploy frontend to S3
-6. ✅ Configure everything automatically
-7. ✅ Create sample data
+### 🧹 Complete Cleanup
+
+```bash
+# Remove ALL AWS resources (saves costs)
+chmod +x cleanup.sh
+./cleanup.sh
+```
+
+## 🛠️ Robust Scripts
+
+### Enhanced Deploy Script (`deploy.sh`)
+- **Automatic Error Recovery**: Retries failed operations
+- **Failed Stack Cleanup**: Automatically removes failed deployments
+- **S3 Configuration**: Properly handles bucket policies and public access
+- **Prerequisite Checking**: Validates all requirements
+- **Resource Verification**: Confirms successful deployment
+- **Sample Data**: Creates demo meeting automatically
+
+### Comprehensive Cleanup Script (`cleanup.sh`)
+- **Complete Resource Removal**: Deletes ALL AWS resources
+- **Cost Estimation**: Shows potential monthly savings
+- **Safe Confirmation**: Requires typing 'DELETE' to proceed  
+- **Verification**: Confirms all resources are removed
+- **Manual Fallback**: Handles edge cases and dependencies
+
+### Quick Completion Script (`complete-deployment.sh`)
+- **Fixes Current Issues**: Resolves S3 bucket policy problems
+- **Environment Setup**: Creates proper .env configuration
+- **Immediate Access**: Provides working URLs instantly
 
 ## 🎨 Design Features
 
@@ -77,7 +111,7 @@ That's it! The script will:
 - `GET /meetings` - Get all meetings with attendee counts
 - `POST /bookings` - Create a new booking
 
-### Admin Endpoints (require password)
+### Admin Endpoints (require password: `Skiing12!`)
 - `GET /bookings` - Get all bookings
 - `POST /meetings` - Create new meeting
 - `DELETE /bookings/{id}` - Remove booking
@@ -135,25 +169,28 @@ WEBSITE_URL=http://your-bucket.s3-website-region.amazonaws.com
 ### Admin Password
 The default admin password is `Skiing12!`. To change it:
 1. Update the CloudFormation template parameter
-2. Redeploy the stack
-3. Update the frontend if needed
+2. Redeploy: `./deploy.sh`
 
 ## 📁 Project Structure
 
 ```
 petes-booking-app/
 ├── 📁 cloudformation/
-│   └── infrastructure.yaml     # Complete AWS infrastructure
+│   └── infrastructure.yaml        # Complete AWS infrastructure
 ├── 📁 lambda/
-│   ├── bookings.js            # Booking management logic
-│   ├── meetings.js            # Meeting CRUD operations
-│   ├── admin.js               # Admin functions & CSV export
-│   └── package.json           # Lambda dependencies
+│   ├── bookings.js               # Booking management logic
+│   ├── meetings.js               # Meeting CRUD operations
+│   ├── admin.js                  # Admin functions & CSV export
+│   └── package.json              # Lambda dependencies
 ├── 📁 frontend/
-│   └── index.html             # React SPA with stunning design
-├── deploy.sh                  # One-command deployment
-├── .env                       # Generated configuration
-└── README.md                  # This file
+│   └── index.html                # React SPA with stunning design
+├── deploy.sh                     # Enhanced one-command deployment
+├── cleanup.sh                    # Complete resource removal
+├── complete-deployment.sh        # Fix current deployment issues
+├── .env                          # Generated configuration
+├── .env.template                 # Environment template
+├── QUICKSTART.md                 # 5-minute setup guide
+└── README.md                     # This file
 ```
 
 ## 🔧 Advanced Usage
@@ -205,6 +242,7 @@ Built-in AWS monitoring:
 - **CORS Configuration**: Proper cross-origin request handling
 - **IAM Roles**: Least-privilege access for AWS resources
 - **Email Validation**: Regex-based email format checking
+- **S3 Security**: Properly configured bucket policies
 
 ## 🚨 Troubleshooting
 
@@ -213,11 +251,15 @@ Built-in AWS monitoring:
 **Deployment Fails**
 - Check AWS credentials: `aws sts get-caller-identity`
 - Ensure sufficient IAM permissions
-- Verify region settings
+- Run enhanced deploy script: `./deploy.sh`
+
+**S3 Bucket Policy Issues**
+- The enhanced deploy script automatically fixes these
+- Run: `./complete-deployment.sh` to fix current deployment
 
 **Frontend Not Loading**
-- Check S3 bucket public access settings
-- Verify API URL in frontend configuration
+- Check the website URL in your `.env` file
+- Verify S3 bucket public access settings
 - Check CORS settings in API Gateway
 
 **Admin Access Issues**
@@ -225,10 +267,10 @@ Built-in AWS monitoring:
 - Check browser console for errors
 - Ensure Lambda functions are updated
 
-### Getting Help
-1. Check the `.env` file for current configuration
-2. Review CloudWatch logs for error details
-3. Verify S3 bucket contents and permissions
+### Cost Management
+- **Monitor Usage**: Check AWS billing dashboard regularly
+- **Clean Up**: Run `./cleanup.sh` when not in use
+- **Development**: Use the dev environment for testing
 
 ## 📈 Performance
 
@@ -237,6 +279,19 @@ Built-in AWS monitoring:
 - **Concurrent Users**: Supports thousands simultaneously
 - **Data Storage**: Unlimited with S3
 - **Global CDN**: Optional CloudFront integration
+
+## 💰 Cost Estimation
+
+**Monthly AWS Costs (Light Usage):**
+- API Gateway: ~$3-10/month
+- Lambda: ~$0-5/month (pay per request)
+- S3: ~$0.50-2/month
+- **Total: ~$3.50-17/month**
+
+**Cost Savings with Cleanup:**
+- Run `./cleanup.sh` when not needed
+- Redeploy with `./deploy.sh` when required
+- Zero costs during downtime
 
 ## 🌟 Future Enhancements
 
@@ -265,7 +320,7 @@ MIT License - Feel free to use this for any purpose!
 - **Backend**: AWS serverless architecture
 - **Frontend**: Modern React with hooks
 - **Icons**: Font Awesome
-- **Deployment**: Automated CloudFormation
+- **Deployment**: Automated CloudFormation with robust error handling
 
 ---
 
@@ -273,12 +328,24 @@ MIT License - Feel free to use this for any purpose!
 
 Your Pete's Booking Page is now live and ready for users! 
 
+**Current Deployment:**
+- 🌐 **Website**: http://petes-booking-app-frontend-338971307797-dev.s3-website-us-east-1.amazonaws.com
+- 🔑 **Admin Password**: `Skiing12!`
+
 **Next Steps:**
 1. Share your website URL with potential attendees
 2. Create your first meetings in the admin panel
 3. Watch bookings come in with real-time updates
 4. Export data for analysis and reporting
+5. Use `./cleanup.sh` to remove resources when not needed
 
-**Support:** If you need any assistance, the entire codebase is well-documented and the deployment script handles everything automatically.
+**Management Commands:**
+```bash
+./deploy.sh           # Deploy or redeploy
+./cleanup.sh          # Remove all AWS resources  
+./complete-deployment.sh  # Fix current deployment
+```
+
+**Support:** All scripts include comprehensive error handling and helpful messages. Check the `.env` file for current configuration.
 
 **Enjoy your new professional booking system! 🚀**
