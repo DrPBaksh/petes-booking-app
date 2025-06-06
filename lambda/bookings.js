@@ -1,27 +1,28 @@
-const AWS = require('aws-sdk');
-const s3 = new AWS.S3();
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid');
 
+const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Password',
 };
 
 // Helper function to get data from S3
 async function getS3Data(key) {
     try {
-        const params = {
+        const command = new GetObjectCommand({
             Bucket: BUCKET_NAME,
             Key: key
-        };
-        const result = await s3.getObject(params).promise();
-        return JSON.parse(result.Body.toString());
+        });
+        const result = await s3Client.send(command);
+        const bodyContents = await result.Body.transformToString();
+        return JSON.parse(bodyContents);
     } catch (error) {
-        if (error.statusCode === 404) {
+        if (error.name === 'NoSuchKey') {
             return null;
         }
         throw error;
@@ -30,13 +31,13 @@ async function getS3Data(key) {
 
 // Helper function to save data to S3
 async function saveS3Data(key, data) {
-    const params = {
+    const command = new PutObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key,
         Body: JSON.stringify(data, null, 2),
         ContentType: 'application/json'
-    };
-    await s3.putObject(params).promise();
+    });
+    await s3Client.send(command);
 }
 
 // Validate admin password
@@ -159,7 +160,7 @@ async function createBooking(event) {
         return {
             statusCode: 500,
             headers: corsHeaders,
-            body: JSON.stringify({ error: 'Failed to create booking' })
+            body: JSON.stringify({ error: 'Failed to create booking: ' + error.message })
         };
     }
 }
@@ -208,17 +209,6 @@ async function deleteBooking(event) {
     }
 }
 
-// Get attendee count for a specific meeting
-async function getAttendeeCount(meetingId) {
-    try {
-        const bookings = await getS3Data('bookings.json') || [];
-        return bookings.filter(b => b.meetingId === meetingId).length;
-    } catch (error) {
-        console.error('Error getting attendee count:', error);
-        return 0;
-    }
-}
-
 exports.handler = async (event) => {
     console.log('Event:', JSON.stringify(event, null, 2));
 
@@ -251,7 +241,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: corsHeaders,
-            body: JSON.stringify({ error: 'Internal server error' })
+            body: JSON.stringify({ error: 'Internal server error: ' + error.message })
         };
     }
 };
