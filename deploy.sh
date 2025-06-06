@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Pete's Booking App - Enhanced Deployment Script
+# Pete's Booking App - Enhanced Deployment Script with CloudFront
 # This script deploys the entire application to AWS with robust error handling
 
 set -e  # Exit on any error
@@ -264,9 +264,21 @@ deploy_infrastructure() {
         --output text \
         --region $AWS_REGION)
     
+    export CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+        --stack-name $STACK_NAME \
+        --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontUrl`].OutputValue' \
+        --output text \
+        --region $AWS_REGION)
+    
     export BUCKET_NAME=$(aws cloudformation describe-stacks \
         --stack-name $STACK_NAME \
         --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+        --output text \
+        --region $AWS_REGION)
+    
+    export FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+        --stack-name $STACK_NAME \
+        --query 'Stacks[0].Outputs[?OutputKey==`FrontendBucketName`].OutputValue' \
         --output text \
         --region $AWS_REGION)
     
@@ -290,7 +302,9 @@ deploy_infrastructure() {
     
     success "Stack outputs retrieved"
     info "API URL: $API_URL"
-    info "S3 Bucket: $BUCKET_NAME"
+    info "CloudFront URL: $CLOUDFRONT_URL"
+    info "Data Bucket: $BUCKET_NAME"
+    info "Frontend Bucket: $FRONTEND_BUCKET"
 }
 
 # Update Lambda functions with actual code
@@ -319,6 +333,10 @@ update_lambda_functions() {
         --region $AWS_REGION > /dev/null
     
     success "All Lambda functions updated"
+    
+    # Wait for functions to be ready
+    info "Waiting for Lambda functions to be ready..."
+    sleep 10
 }
 
 # Prepare frontend with API URL
@@ -334,66 +352,77 @@ prepare_frontend() {
     success "Frontend prepared with API URL: $API_URL"
 }
 
-# Create S3 bucket for frontend hosting with proper configuration
-setup_frontend_hosting() {
-    header "Setting up Frontend Hosting"
+# Deploy frontend to S3 and CloudFront
+deploy_frontend() {
+    header "Deploying Frontend to CloudFront"
     
-    # Create a unique bucket name for frontend
-    FRONTEND_BUCKET="${STACK_NAME}-frontend-${AWS_ACCOUNT_ID}-${ENVIRONMENT}"
+    info "Uploading frontend to S3 bucket: $FRONTEND_BUCKET"
     
-    info "Creating S3 bucket for frontend hosting: $FRONTEND_BUCKET"
-    
-    # Create bucket (ignore error if it already exists)
-    aws s3 mb s3://$FRONTEND_BUCKET --region $AWS_REGION 2>/dev/null || {
-        warning "Bucket already exists or could not be created"
-    }
-    
-    # Configure bucket for static website hosting
-    retry $MAX_RETRIES aws s3 website s3://$FRONTEND_BUCKET \
-        --index-document index.html \
-        --error-document index.html
-    
-    # Update public access block settings for website hosting
-    info "Configuring bucket public access settings..."
-    aws s3api put-public-access-block \
-        --bucket $FRONTEND_BUCKET \
-        --public-access-block-configuration \
-        BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false \
-        2>/dev/null || {
-        warning "Could not update public access block settings"
-    }
-    
-    # Create bucket policy for public read access
-    cat > .deploy/bucket-policy.json << EOF
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "PublicReadGetObject",
-            "Effect": "Allow",
-            "Principal": "*",
-            "Action": "s3:GetObject",
-            "Resource": "arn:aws:s3:::$FRONTEND_BUCKET/*"
-        }
-    ]
-}
-EOF
-    
-    # Apply bucket policy with retry
-    retry $MAX_RETRIES aws s3api put-bucket-policy \
-        --bucket $FRONTEND_BUCKET \
-        --policy file://.deploy/bucket-policy.json
-    
-    # Upload frontend
-    info "Uploading frontend files..."
+    # Upload frontend with proper content type and caching headers
     retry $MAX_RETRIES aws s3 cp .deploy/frontend/index.html s3://$FRONTEND_BUCKET/index.html \
-        --content-type "text/html"
+        --content-type "text/html" \
+        --cache-control "max-age=300" \
+        --region $AWS_REGION
     
-    # Get website URL
-    export WEBSITE_URL="http://${FRONTEND_BUCKET}.s3-website-${AWS_REGION}.amazonaws.com"
+    success "Frontend uploaded to S3"
     
-    success "Frontend deployed to S3"
-    info "Website URL: $WEBSITE_URL"
+    # Get CloudFront distribution ID
+    local DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+        --stack-name $STACK_NAME \
+        --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontUrl`].OutputValue' \
+        --output text \
+        --region $AWS_REGION | sed 's|https://||' | sed 's|\.cloudfront\.net||')
+    
+    if [ ! -z "$DISTRIBUTION_ID" ] && [ "$DISTRIBUTION_ID" != "None" ]; then
+        info "Creating CloudFront invalidation..."
+        local INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id $DISTRIBUTION_ID \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text 2>/dev/null || echo "failed")
+        
+        if [ "$INVALIDATION_ID" != "failed" ]; then
+            success "CloudFront invalidation created: $INVALIDATION_ID"
+            info "Frontend will be available at: $CLOUDFRONT_URL"
+        else
+            warning "Could not create CloudFront invalidation"
+        fi
+    else
+        warning "Could not determine CloudFront distribution ID"
+    fi
+    
+    export WEBSITE_URL=$CLOUDFRONT_URL
+    success "Frontend deployed to CloudFront"
+}
+
+# Test Lambda function functionality
+test_lambda_functions() {
+    header "Testing Lambda Functions"
+    
+    info "Testing meetings Lambda function..."
+    
+    # Test creating a meeting
+    local test_response=$(curl -s -X POST "$API_URL/meetings" \
+        -H "Content-Type: application/json" \
+        -H "X-Admin-Password: Skiing12!" \
+        -d '{
+            "title": "Test Meeting",
+            "description": "Deployment test meeting",
+            "date": "'$(date -d "+7 days" +%Y-%m-%d 2>/dev/null || date -v+7d +%Y-%m-%d 2>/dev/null || echo "2025-06-15")'",
+            "time": "14:00",
+            "duration": 60,
+            "location": "Test Room",
+            "minAttendees": 1,
+            "maxAttendees": 5
+        }' 2>/dev/null || echo '{"error":"Failed to connect"}')
+    
+    if echo "$test_response" | grep -q "Meeting created successfully"; then
+        success "Lambda functions are working correctly"
+        info "Test meeting created successfully"
+    else
+        warning "Lambda function test failed or returned unexpected response"
+        info "Response: $test_response"
+    fi
 }
 
 # Create environment file
@@ -426,6 +455,7 @@ ADMIN_FUNCTION_NAME=$ADMIN_FUNCTION
 
 # Frontend
 WEBSITE_URL=$WEBSITE_URL
+CLOUDFRONT_URL=$CLOUDFRONT_URL
 
 # Admin Configuration
 ADMIN_PASSWORD=Skiing12!
@@ -438,7 +468,7 @@ EOF
 initialize_sample_data() {
     header "Initializing Sample Data"
     
-    info "Creating sample meeting..."
+    info "Creating welcome meeting..."
     
     # Wait a moment for the API to be ready
     sleep 5
@@ -446,23 +476,29 @@ initialize_sample_data() {
     # Create a sample meeting with proper error handling
     local sample_date=$(date -d "+7 days" +%Y-%m-%d 2>/dev/null || date -v+7d +%Y-%m-%d 2>/dev/null || echo "2025-06-15")
     
-    curl -s -X POST "$API_URL/meetings" \
+    local response=$(curl -s -w "%{http_code}" -X POST "$API_URL/meetings" \
         -H "Content-Type: application/json" \
         -H "X-Admin-Password: Skiing12!" \
         -d "{
-            \"title\": \"Welcome Meeting\",
-            \"description\": \"Introduction to Pete's Booking System\",
+            \"title\": \"Welcome to Pete's Booking System\",
+            \"description\": \"Introduction meeting for new users\",
             \"date\": \"$sample_date\",
             \"time\": \"14:00\",
             \"duration\": 60,
-            \"location\": \"Conference Room A\",
+            \"location\": \"Main Conference Room\",
             \"minAttendees\": 1,
             \"maxAttendees\": 10
-        }" > /dev/null 2>&1 && {
-        success "Sample meeting created"
-    } || {
-        warning "Could not create sample meeting (API may need a moment to initialize)"
-    }
+        }")
+    
+    local http_code="${response: -3}"
+    local body="${response%???}"
+    
+    if [ "$http_code" = "201" ]; then
+        success "Sample meeting created successfully"
+    else
+        warning "Could not create sample meeting (HTTP: $http_code)"
+        info "API may need a moment to initialize"
+    fi
 }
 
 # Cleanup temporary files
@@ -479,7 +515,7 @@ main() {
     echo -e "${GREEN}"
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║                   Pete's Booking App                         ║"
-    echo "║            Enhanced One Command Deployment                   ║"
+    echo "║         Professional CloudFront Deployment                   ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
@@ -488,7 +524,8 @@ main() {
     deploy_infrastructure
     update_lambda_functions
     prepare_frontend
-    setup_frontend_hosting
+    deploy_frontend
+    test_lambda_functions
     create_env_file
     initialize_sample_data
     cleanup
@@ -511,12 +548,18 @@ main() {
     
     echo -e "\n${BLUE}📁 Files Created:${NC}"
     echo -e "   • ${GREEN}.env${NC} - Environment configuration"
-    echo -e "   • Frontend deployed to S3 bucket"
+    echo -e "   • Frontend deployed to CloudFront CDN"
     echo -e "   • All AWS resources provisioned"
     
     echo -e "\n${BLUE}🧹 Cleanup:${NC}"
     echo -e "   • Run ${GREEN}./cleanup.sh${NC} to remove all AWS resources"
     echo -e "   • Run ${GREEN}./deploy.sh${NC} again to redeploy if needed"
+    
+    echo -e "\n${BLUE}✨ Features:${NC}"
+    echo -e "   • Professional black/white design with green accents"
+    echo -e "   • CloudFront CDN for global performance"
+    echo -e "   • Fixed Lambda functions with AWS SDK v3"
+    echo -e "   • Real-time meeting booking and management"
     
     echo -e "\n${GREEN}✨ Your Pete's Booking App is ready to use! ✨${NC}\n"
 }
