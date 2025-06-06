@@ -1,0 +1,566 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Professional Booking App with CloudFront CDN - Complete serverless architecture'
+
+Parameters:
+  AppName:
+    Type: String
+    Default: petes-booking-app
+    Description: Name of the application
+
+Resources:
+  # S3 Bucket for website hosting
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AppName}-website-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, POST, PUT, DELETE, HEAD]
+            AllowedOrigins: ['*']
+            MaxAge: 3000
+
+  # S3 Bucket Policy for public read access
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${WebsiteBucket}/*'
+
+  # S3 Bucket for CloudFront access logs
+  CloudFrontLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AppName}-cloudfront-logs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # CloudFront Origin Access Control
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AppName}-OAC'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub 'CloudFront distribution for ${AppName}'
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled for dynamic content
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD, OPTIONS]
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !Ref OriginAccessControl
+        PriceClass: PriceClass_100  # Use only North America and Europe edge locations
+        Logging:
+          Bucket: !GetAtt CloudFrontLogsBucket.DomainName
+          IncludeCookies: false
+          Prefix: 'cloudfront-logs/'
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # DynamoDB Table for bookings
+  BookingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AppName}-bookings'
+      BillingMode: ON_DEMAND
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: DateIndex
+          KeySchema:
+            - AttributeName: date
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Application
+          Value: !Ref AppName
+
+  # IAM Role for Lambda Functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: 
+                  - !GetAtt BookingsTable.Arn
+                  - !Sub '${BookingsTable.Arn}/index/*'
+
+  # Lambda Function for Bookings
+  BookingsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppName}-BookingFunction'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref BookingsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+          const { DynamoDBDocumentClient, PutCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+          
+          const client = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(client);
+          
+          exports.handler = async (event) => {
+              const headers = {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Content-Type': 'application/json'
+              };
+              
+              try {
+                  if (event.httpMethod === 'OPTIONS') {
+                      return { statusCode: 200, headers, body: JSON.stringify({}) };
+                  }
+                  
+                  if (event.httpMethod === 'POST') {
+                      const booking = JSON.parse(event.body);
+                      
+                      // Validate required fields
+                      if (!booking.name || !booking.email || !booking.date || !booking.time) {
+                          return {
+                              statusCode: 400,
+                              headers,
+                              body: JSON.stringify({
+                                  success: false,
+                                  message: 'Missing required fields'
+                              })
+                          };
+                      }
+                      
+                      // Check for existing booking at the same date/time
+                      const existingBooking = await docClient.send(new QueryCommand({
+                          TableName: process.env.DYNAMODB_TABLE,
+                          IndexName: 'DateIndex',
+                          KeyConditionExpression: '#date = :date',
+                          FilterExpression: '#time = :time',
+                          ExpressionAttributeNames: {
+                              '#date': 'date',
+                              '#time': 'time'
+                          },
+                          ExpressionAttributeValues: {
+                              ':date': booking.date,
+                              ':time': booking.time
+                          }
+                      }));
+                      
+                      if (existingBooking.Items && existingBooking.Items.length > 0) {
+                          return {
+                              statusCode: 409,
+                              headers,
+                              body: JSON.stringify({
+                                  success: false,
+                                  message: 'Time slot already booked'
+                              })
+                          };
+                      }
+                      
+                      // Create new booking
+                      const newBooking = {
+                          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                          ...booking,
+                          status: 'confirmed',
+                          createdAt: new Date().toISOString()
+                      };
+                      
+                      await docClient.send(new PutCommand({
+                          TableName: process.env.DYNAMODB_TABLE,
+                          Item: newBooking
+                      }));
+                      
+                      return {
+                          statusCode: 200,
+                          headers,
+                          body: JSON.stringify({
+                              success: true,
+                              message: 'Booking created successfully',
+                              booking: newBooking
+                          })
+                      };
+                  }
+                  
+                  return {
+                      statusCode: 405,
+                      headers,
+                      body: JSON.stringify({
+                          success: false,
+                          message: 'Method not allowed'
+                      })
+                  };
+                  
+              } catch (error) {
+                  console.error('Error:', error);
+                  return {
+                      statusCode: 500,
+                      headers,
+                      body: JSON.stringify({
+                          success: false,
+                          message: 'Internal server error',
+                          error: error.message
+                      })
+                  };
+              }
+          };
+
+  # Lambda Function for Admin Operations
+  AdminFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${AppName}-AdminFunction'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref BookingsTable
+      Code:
+        ZipFile: |
+          const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+          const { DynamoDBDocumentClient, ScanCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
+          
+          const client = new DynamoDBClient({});
+          const docClient = DynamoDBDocumentClient.from(client);
+          
+          exports.handler = async (event) => {
+              const headers = {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                  'Content-Type': 'application/json'
+              };
+              
+              try {
+                  if (event.httpMethod === 'OPTIONS') {
+                      return { statusCode: 200, headers, body: JSON.stringify({}) };
+                  }
+                  
+                  if (event.httpMethod === 'GET') {
+                      const result = await docClient.send(new ScanCommand({
+                          TableName: process.env.DYNAMODB_TABLE
+                      }));
+                      
+                      return {
+                          statusCode: 200,
+                          headers,
+                          body: JSON.stringify({
+                              success: true,
+                              bookings: result.Items || []
+                          })
+                      };
+                  }
+                  
+                  if (event.httpMethod === 'DELETE') {
+                      const bookingId = event.pathParameters?.id;
+                      
+                      if (!bookingId) {
+                          return {
+                              statusCode: 400,
+                              headers,
+                              body: JSON.stringify({
+                                  success: false,
+                                  message: 'Booking ID required'
+                              })
+                          };
+                      }
+                      
+                      await docClient.send(new DeleteCommand({
+                          TableName: process.env.DYNAMODB_TABLE,
+                          Key: { id: bookingId }
+                      }));
+                      
+                      return {
+                          statusCode: 200,
+                          headers,
+                          body: JSON.stringify({
+                              success: true,
+                              message: 'Booking deleted successfully'
+                          })
+                      };
+                  }
+                  
+                  return {
+                      statusCode: 405,
+                      headers,
+                      body: JSON.stringify({
+                          success: false,
+                          message: 'Method not allowed'
+                      })
+                  };
+                  
+              } catch (error) {
+                  console.error('Error:', error);
+                  return {
+                      statusCode: 500,
+                      headers,
+                      body: JSON.stringify({
+                          success: false,
+                          message: 'Internal server error',
+                          error: error.message
+                      })
+                  };
+              }
+          };
+
+  # API Gateway
+  BookingApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${AppName}-api'
+      Description: 'API for booking application'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resources
+  BookingsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BookingApi
+      ParentId: !GetAtt BookingApi.RootResourceId
+      PathPart: bookings
+
+  AdminResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BookingApi
+      ParentId: !GetAtt BookingApi.RootResourceId
+      PathPart: admin
+
+  AdminBookingsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BookingApi
+      ParentId: !Ref AdminResource
+      PathPart: bookings
+
+  AdminBookingByIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref BookingApi
+      ParentId: !Ref AdminBookingsResource
+      PathPart: '{id}'
+
+  # API Gateway Methods
+  BookingsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref BookingsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BookingsFunction.Arn}/invocations'
+
+  BookingsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref BookingsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BookingsFunction.Arn}/invocations'
+
+  AdminBookingsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref AdminBookingsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  AdminBookingsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref AdminBookingsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  AdminBookingDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref AdminBookingByIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  AdminBookingOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref BookingApi
+      ResourceId: !Ref AdminBookingByIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  # Lambda Permissions for API Gateway
+  BookingsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BookingsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BookingApi}/*/*'
+
+  AdminLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BookingApi}/*/*'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - BookingsPostMethod
+      - BookingsOptionsMethod
+      - AdminBookingsGetMethod
+      - AdminBookingsOptionsMethod
+      - AdminBookingDeleteMethod
+      - AdminBookingOptionsMethod
+    Properties:
+      RestApiId: !Ref BookingApi
+      StageName: prod
+
+Outputs:
+  WebsiteURL:
+    Description: 'Website URL (S3)'
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AppName}-WebsiteURL'
+
+  CloudFrontURL:
+    Description: 'CloudFront Distribution URL'
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AppName}-CloudFrontURL'
+
+  CloudFrontDistributionId:
+    Description: 'CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${AppName}-CloudFrontDistributionId'
+
+  APIGatewayURL:
+    Description: 'API Gateway URL'
+    Value: !Sub 'https://${BookingApi}.execute-api.${AWS::Region}.amazonaws.com/prod'
+    Export:
+      Name: !Sub '${AppName}-APIGatewayURL'
+
+  WebsiteBucket:
+    Description: 'S3 Bucket for website'
+    Value: !Ref WebsiteBucket
+    Export:
+      Name: !Sub '${AppName}-WebsiteBucket'
+
+  CloudFrontLogsBucket:
+    Description: 'S3 Bucket for CloudFront logs'
+    Value: !Ref CloudFrontLogsBucket
+    Export:
+      Name: !Sub '${AppName}-CloudFrontLogsBucket'
+
+  DynamoDBTable:
+    Description: 'DynamoDB Table'
+    Value: !Ref BookingsTable
+    Export:
+      Name: !Sub '${AppName}-DynamoDBTable'
