@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Pete Booking Page - Complete AWS Infrastructure'
+Description: 'Pete Booking Page - Complete AWS Infrastructure with CloudFront'
 
 Parameters:
   Environment:
@@ -26,6 +26,82 @@ Resources:
             AllowedMethods: [GET, POST, PUT, DELETE]
             AllowedOrigins: ['*']
             MaxAge: 3000
+
+  # S3 Bucket for Frontend (private - accessed via CloudFront)
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'petes-booking-frontend-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # CloudFront Origin Access Control
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'petes-booking-oac-${Environment}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+        Enabled: true
+        DefaultRootObject: index.html
+        Comment: !Sub 'Pete Booking App - ${Environment}'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          OriginRequestPolicyId: 88a5eaf4-2fd4-4709-b370-b4c650ea3fcf  # Managed-CORS-S3Origin
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03  # Managed-SecurityHeadersPolicy
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+
+  # CloudFront Distribution Bucket Policy
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipal
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -121,6 +197,7 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref BookingDataBucket
           ADMIN_PASSWORD: 'Skiing12!'
+          AWS_REGION: !Ref AWS::Region
       Code:
         ZipFile: |
           exports.handler = async (event) => {
@@ -145,6 +222,7 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref BookingDataBucket
           ADMIN_PASSWORD: 'Skiing12!'
+          AWS_REGION: !Ref AWS::Region
       Code:
         ZipFile: |
           exports.handler = async (event) => {
@@ -169,6 +247,7 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref BookingDataBucket
           ADMIN_PASSWORD: 'Skiing12!'
+          AWS_REGION: !Ref AWS::Region
       Code:
         ZipFile: |
           exports.handler = async (event) => {
@@ -491,11 +570,23 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-ApiUrl'
 
+  CloudFrontUrl:
+    Description: 'CloudFront Distribution URL'
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontUrl'
+
   BucketName:
-    Description: 'S3 Bucket Name'
+    Description: 'S3 Bucket Name for Data'
     Value: !Ref BookingDataBucket
     Export:
       Name: !Sub '${AWS::StackName}-BucketName'
+
+  FrontendBucketName:
+    Description: 'S3 Bucket Name for Frontend'
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucketName'
 
   BookingsFunctionName:
     Description: 'Bookings Lambda Function Name'
