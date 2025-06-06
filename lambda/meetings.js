@@ -1,27 +1,28 @@
-const AWS = require('aws-sdk');
-const s3 = new AWS.S3();
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { v4: uuidv4 } = require('uuid');
 
+const s3Client = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
 const BUCKET_NAME = process.env.BUCKET_NAME;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Password',
 };
 
 // Helper function to get data from S3
 async function getS3Data(key) {
     try {
-        const params = {
+        const command = new GetObjectCommand({
             Bucket: BUCKET_NAME,
             Key: key
-        };
-        const result = await s3.getObject(params).promise();
-        return JSON.parse(result.Body.toString());
+        });
+        const result = await s3Client.send(command);
+        const bodyContents = await result.Body.transformToString();
+        return JSON.parse(bodyContents);
     } catch (error) {
-        if (error.statusCode === 404) {
+        if (error.name === 'NoSuchKey') {
             return null;
         }
         throw error;
@@ -30,13 +31,13 @@ async function getS3Data(key) {
 
 // Helper function to save data to S3
 async function saveS3Data(key, data) {
-    const params = {
+    const command = new PutObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key,
         Body: JSON.stringify(data, null, 2),
         ContentType: 'application/json'
-    };
-    await s3.putObject(params).promise();
+    });
+    await s3Client.send(command);
 }
 
 // Validate admin password
@@ -149,17 +150,6 @@ async function createMeeting(event) {
             };
         }
 
-        // Check if date is in the future
-        if (meetingDate < new Date()) {
-            return {
-                statusCode: 400,
-                headers: corsHeaders,
-                body: JSON.stringify({ 
-                    error: 'Meeting date must be in the future' 
-                })
-            };
-        }
-
         const meetings = await getS3Data('meetings.json') || [];
         
         // Create new meeting
@@ -193,7 +183,7 @@ async function createMeeting(event) {
         return {
             statusCode: 500,
             headers: corsHeaders,
-            body: JSON.stringify({ error: 'Failed to create meeting' })
+            body: JSON.stringify({ error: 'Failed to create meeting: ' + error.message })
         };
     }
 }
@@ -262,71 +252,6 @@ async function deleteMeeting(event) {
     }
 }
 
-// Update a meeting (admin only)
-async function updateMeeting(event) {
-    if (!validateAdminPassword(event)) {
-        return {
-            statusCode: 401,
-            headers: corsHeaders,
-            body: JSON.stringify({ error: 'Invalid admin password' })
-        };
-    }
-
-    try {
-        const meetingId = event.pathParameters?.id;
-        if (!meetingId) {
-            return {
-                statusCode: 400,
-                headers: corsHeaders,
-                body: JSON.stringify({ error: 'Meeting ID is required' })
-            };
-        }
-
-        const { title, description, date, time, duration, minAttendees, maxAttendees, location } = JSON.parse(event.body);
-        const meetings = await getS3Data('meetings.json') || [];
-        
-        const meetingIndex = meetings.findIndex(m => m.id === meetingId);
-        if (meetingIndex === -1) {
-            return {
-                statusCode: 404,
-                headers: corsHeaders,
-                body: JSON.stringify({ error: 'Meeting not found' })
-            };
-        }
-
-        // Update meeting with provided fields
-        const meeting = meetings[meetingIndex];
-        if (title !== undefined) meeting.title = title.trim();
-        if (description !== undefined) meeting.description = description.trim();
-        if (date !== undefined) meeting.date = date;
-        if (time !== undefined) meeting.time = time;
-        if (duration !== undefined) meeting.duration = parseInt(duration);
-        if (minAttendees !== undefined) meeting.minAttendees = minAttendees ? parseInt(minAttendees) : null;
-        if (maxAttendees !== undefined) meeting.maxAttendees = maxAttendees ? parseInt(maxAttendees) : null;
-        if (location !== undefined) meeting.location = location.trim();
-        
-        meeting.updatedAt = new Date().toISOString();
-
-        await saveS3Data('meetings.json', meetings);
-
-        return {
-            statusCode: 200,
-            headers: corsHeaders,
-            body: JSON.stringify({ 
-                message: 'Meeting updated successfully',
-                meeting
-            })
-        };
-    } catch (error) {
-        console.error('Error updating meeting:', error);
-        return {
-            statusCode: 500,
-            headers: corsHeaders,
-            body: JSON.stringify({ error: 'Failed to update meeting' })
-        };
-    }
-}
-
 exports.handler = async (event) => {
     console.log('Event:', JSON.stringify(event, null, 2));
 
@@ -345,8 +270,6 @@ exports.handler = async (event) => {
                 return await getAllMeetings();
             case 'POST':
                 return await createMeeting(event);
-            case 'PUT':
-                return await updateMeeting(event);
             case 'DELETE':
                 return await deleteMeeting(event);
             default:
@@ -361,7 +284,7 @@ exports.handler = async (event) => {
         return {
             statusCode: 500,
             headers: corsHeaders,
-            body: JSON.stringify({ error: 'Internal server error' })
+            body: JSON.stringify({ error: 'Internal server error: ' + error.message })
         };
     }
 };
