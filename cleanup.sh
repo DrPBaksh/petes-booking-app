@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Pete's Booking App - Cleanup Script
-# This script removes all AWS resources created by the deployment
+# Pete's Booking App - Enhanced Cleanup Script
+# This script removes all AWS resources including CloudFront distribution
 
 set -e  # Exit on any error
 
@@ -84,6 +84,39 @@ wait_for_stack_deletion() {
     return 0
 }
 
+# Function to wait for CloudFront distribution deletion
+wait_for_cloudfront_deletion() {
+    local distribution_id=$1
+    
+    if [ -z "$distribution_id" ] || [ "$distribution_id" = "None" ]; then
+        return 0
+    fi
+    
+    info "Waiting for CloudFront distribution deletion to complete..."
+    
+    while true; do
+        local status=$(aws cloudfront get-distribution \
+            --id "$distribution_id" \
+            --query 'Distribution.Status' \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+        
+        case $status in
+            "NOT_FOUND")
+                success "CloudFront distribution deleted"
+                return 0
+                ;;
+            "InProgress")
+                info "CloudFront distribution deletion in progress..."
+                sleep 30
+                ;;
+            *)
+                info "CloudFront status: $status"
+                sleep 20
+                ;;
+        esac
+    done
+}
+
 # Function to empty and delete S3 buckets
 cleanup_s3_buckets() {
     header "Cleaning Up S3 Buckets"
@@ -91,9 +124,10 @@ cleanup_s3_buckets() {
     # Get AWS Account ID
     local AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
     
-    # List of potential bucket names
+    # List of potential bucket names (both old and new patterns)
     local buckets=(
         "petes-booking-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+        "petes-booking-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
         "${STACK_NAME}-frontend-${AWS_ACCOUNT_ID}-${ENVIRONMENT}"
     )
     
@@ -111,7 +145,7 @@ cleanup_s3_buckets() {
             info "Removing versioned objects..."
             aws s3api list-object-versions --bucket "$bucket" --query 'Versions[].{Key:Key,VersionId:VersionId}' --output text 2>/dev/null | \
             while read key version_id; do
-                if [ -n "$key" ] && [ -n "$version_id" ]; then
+                if [ -n "$key" ] && [ -n "$version_id" ] && [ "$key" != "None" ] && [ "$version_id" != "None" ]; then
                     aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$version_id" 2>/dev/null || true
                 fi
             done
@@ -119,7 +153,7 @@ cleanup_s3_buckets() {
             # Delete delete markers
             aws s3api list-object-versions --bucket "$bucket" --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output text 2>/dev/null | \
             while read key version_id; do
-                if [ -n "$key" ] && [ -n "$version_id" ]; then
+                if [ -n "$key" ] && [ -n "$version_id" ] && [ "$key" != "None" ] && [ "$version_id" != "None" ]; then
                     aws s3api delete-object --bucket "$bucket" --key "$key" --version-id "$version_id" 2>/dev/null || true
                 fi
             done
@@ -129,6 +163,71 @@ cleanup_s3_buckets() {
             info "Bucket $bucket not found (may already be deleted)"
         fi
     done
+}
+
+# Function to disable and delete CloudFront distribution
+cleanup_cloudfront() {
+    header "Cleaning Up CloudFront Distribution"
+    
+    # Try to get CloudFront distribution from stack outputs first
+    local CLOUDFRONT_URL=""
+    if stack_exists "$STACK_NAME"; then
+        CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontUrl`].OutputValue' \
+            --output text \
+            --region $REGION 2>/dev/null || echo "")
+    fi
+    
+    if [ -n "$CLOUDFRONT_URL" ] && [ "$CLOUDFRONT_URL" != "None" ]; then
+        # Extract distribution ID from URL
+        local DISTRIBUTION_ID=$(echo "$CLOUDFRONT_URL" | sed 's|https://||' | sed 's|\.cloudfront\.net||')
+        
+        if [ -n "$DISTRIBUTION_ID" ]; then
+            info "Found CloudFront distribution: $DISTRIBUTION_ID"
+            
+            # Get current distribution config
+            local ETAG=$(aws cloudfront get-distribution \
+                --id "$DISTRIBUTION_ID" \
+                --query 'ETag' \
+                --output text 2>/dev/null || echo "")
+            
+            if [ -n "$ETAG" ] && [ "$ETAG" != "None" ]; then
+                info "Disabling CloudFront distribution..."
+                
+                # Get distribution config and disable it
+                aws cloudfront get-distribution-config \
+                    --id "$DISTRIBUTION_ID" \
+                    --query 'DistributionConfig' \
+                    --output json > /tmp/dist-config.json 2>/dev/null || {
+                    warning "Could not get distribution config"
+                    return
+                }
+                
+                # Modify config to disable distribution
+                jq '.Enabled = false' /tmp/dist-config.json > /tmp/dist-config-disabled.json
+                
+                # Update distribution
+                aws cloudfront update-distribution \
+                    --id "$DISTRIBUTION_ID" \
+                    --distribution-config file:///tmp/dist-config-disabled.json \
+                    --if-match "$ETAG" > /dev/null 2>&1 && {
+                    success "CloudFront distribution disabled"
+                    
+                    # Wait for distribution to be disabled before stack deletion
+                    info "Waiting for CloudFront distribution to be disabled..."
+                    sleep 60
+                } || {
+                    warning "Could not disable CloudFront distribution"
+                }
+                
+                # Clean up temp files
+                rm -f /tmp/dist-config.json /tmp/dist-config-disabled.json
+            fi
+        fi
+    else
+        info "No CloudFront distribution found in stack outputs"
+    fi
 }
 
 # Function to delete Lambda functions manually (in case they're not deleted by stack)
@@ -167,7 +266,7 @@ cleanup_iam_roles() {
         # Detach managed policies
         aws iam list-attached-role-policies --role-name "$role_name" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null | \
         while read policy_arn; do
-            if [ -n "$policy_arn" ]; then
+            if [ -n "$policy_arn" ] && [ "$policy_arn" != "None" ]; then
                 aws iam detach-role-policy --role-name "$role_name" --policy-arn "$policy_arn" 2>/dev/null && {
                     info "Detached policy: $policy_arn"
                 } || true
@@ -177,7 +276,7 @@ cleanup_iam_roles() {
         # Delete inline policies
         aws iam list-role-policies --role-name "$role_name" --query 'PolicyNames' --output text 2>/dev/null | \
         while read policy_name; do
-            if [ -n "$policy_name" ]; then
+            if [ -n "$policy_name" ] && [ "$policy_name" != "None" ]; then
                 aws iam delete-role-policy --role-name "$role_name" --policy-name "$policy_name" 2>/dev/null && {
                     info "Deleted inline policy: $policy_name"
                 } || true
@@ -208,6 +307,17 @@ show_resources() {
             --region "$REGION")
         echo "  📦 CloudFormation Stack: $STACK_NAME (Status: $status)"
         
+        # Show CloudFront distribution
+        local CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name $STACK_NAME \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontUrl`].OutputValue' \
+            --output text \
+            --region $REGION 2>/dev/null || echo "None")
+        
+        if [ -n "$CLOUDFRONT_URL" ] && [ "$CLOUDFRONT_URL" != "None" ]; then
+            echo "  ☁️  CloudFront Distribution: $CLOUDFRONT_URL"
+        fi
+        
         # Show stack resources
         info "Stack resources:"
         aws cloudformation describe-stack-resources \
@@ -223,6 +333,7 @@ show_resources() {
     local AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
     local buckets=(
         "petes-booking-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+        "petes-booking-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
         "${STACK_NAME}-frontend-${AWS_ACCOUNT_ID}-${ENVIRONMENT}"
     )
     
@@ -253,13 +364,14 @@ show_resources() {
 estimate_cost_savings() {
     header "Estimated Monthly Cost Savings"
     
+    echo "  💰 CloudFront CDN: ~\$1-5/month (depending on traffic)"
     echo "  💰 API Gateway: ~\$3-10/month (depending on usage)"
     echo "  💰 Lambda Functions: ~\$0-5/month (pay per request)"
     echo "  💰 S3 Storage: ~\$0.50-2/month (depending on data size)"
     echo "  💰 CloudFormation: Free"
     echo "  💰 IAM: Free"
     echo ""
-    echo "  💵 Total Estimated Savings: ~\$3.50-17/month"
+    echo "  💵 Total Estimated Savings: ~\$4.50-22/month"
     echo ""
     warning "Note: Actual costs depend on usage patterns"
 }
@@ -269,7 +381,7 @@ main() {
     echo -e "${RED}"
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║                   Pete's Booking App                         ║"
-    echo "║                    Cleanup Script                            ║"
+    echo "║              Enhanced Cleanup Script                         ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
@@ -284,6 +396,7 @@ main() {
     
     # Confirmation prompt
     echo -e "${YELLOW}⚠️  This will DELETE ALL Pete's Booking App resources from AWS!${NC}"
+    echo -e "${YELLOW}⚠️  Including CloudFront distribution, S3 buckets, and Lambda functions!${NC}"
     echo -e "${YELLOW}⚠️  This action CANNOT be undone!${NC}"
     echo ""
     read -p "Are you sure you want to continue? (type 'DELETE' to confirm): " confirmation
@@ -294,12 +407,15 @@ main() {
     fi
     
     echo ""
-    header "Starting Cleanup Process"
+    header "Starting Enhanced Cleanup Process"
     
-    # Step 1: Empty S3 buckets (must be done before CloudFormation deletion)
+    # Step 1: Disable CloudFront distribution (must be done before stack deletion)
+    cleanup_cloudfront
+    
+    # Step 2: Empty S3 buckets (must be done before CloudFormation deletion)
     cleanup_s3_buckets
     
-    # Step 2: Delete CloudFormation stack
+    # Step 3: Delete CloudFormation stack
     if stack_exists "$STACK_NAME"; then
         header "Deleting CloudFormation Stack"
         info "Deleting stack: $STACK_NAME"
@@ -310,11 +426,11 @@ main() {
         info "CloudFormation stack not found"
     fi
     
-    # Step 3: Manual cleanup of any remaining resources
+    # Step 4: Manual cleanup of any remaining resources
     cleanup_lambda_functions
     cleanup_iam_roles
     
-    # Step 4: Clean up local files
+    # Step 5: Clean up local files
     header "Cleaning Up Local Files"
     
     if [ -f ".env" ]; then
@@ -343,6 +459,7 @@ main() {
     local AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "unknown")
     local buckets=(
         "petes-booking-data-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
+        "petes-booking-frontend-${ENVIRONMENT}-${AWS_ACCOUNT_ID}"
         "${STACK_NAME}-frontend-${AWS_ACCOUNT_ID}-${ENVIRONMENT}"
     )
     
@@ -358,13 +475,17 @@ main() {
         
         echo -e "${BLUE}📋 Summary:${NC}"
         echo -e "   • All Pete's Booking App resources have been removed"
+        echo -e "   • CloudFront distribution deleted"
+        echo -e "   • S3 buckets emptied and removed"
+        echo -e "   • Lambda functions deleted"
         echo -e "   • AWS resources are no longer incurring costs"
         echo -e "   • Local configuration files cleaned up"
         
         echo -e "\n${BLUE}🚀 Next Steps:${NC}"
         echo -e "   • Run ${GREEN}./deploy.sh${NC} to redeploy the application"
-        echo -e "   • The application code remains in this directory"
+        echo -e "   • The enhanced application code remains in this directory"
         echo -e "   • All deployment scripts are ready for reuse"
+        echo -e "   • New deployment will include CloudFront and improved design"
         
         echo -e "\n${GREEN}✨ Cleanup completed successfully! ✨${NC}\n"
     else
@@ -373,9 +494,11 @@ main() {
         echo -e "${YELLOW}📋 Manual Action Required:${NC}"
         echo -e "   • $remaining_resources resource(s) still exist"
         echo -e "   • Check the AWS Console for any remaining resources"
+        echo -e "   • CloudFront distributions may take up to 15 minutes to delete"
         echo -e "   • Manually delete any resources that couldn't be removed"
         
         echo -e "\n${BLUE}🔍 Troubleshooting:${NC}"
+        echo -e "   • CloudFront distributions take time to disable and delete"
         echo -e "   • Some resources may have dependencies"
         echo -e "   • Check CloudFormation stack events for details"
         echo -e "   • Wait a few minutes and run this script again"
