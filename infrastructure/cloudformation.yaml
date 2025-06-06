@@ -41,17 +41,6 @@ Resources:
             Action: 's3:GetObject'
             Resource: !Sub '${WebsiteBucket}/*'
 
-  # S3 Bucket for CloudFront access logs
-  CloudFrontLogsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub '${AppName}-cloudfront-logs-${AWS::AccountId}'
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
   # CloudFront Origin Access Control
   OriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
@@ -62,7 +51,7 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # CloudFront Distribution
+  # CloudFront Distribution (without logging to avoid ACL issues)
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -86,10 +75,6 @@ Resources:
               OriginAccessIdentity: ''
             OriginAccessControlId: !Ref OriginAccessControl
         PriceClass: PriceClass_100  # Use only North America and Europe edge locations
-        Logging:
-          Bucket: !GetAtt CloudFrontLogsBucket.DomainName
-          IncludeCookies: false
-          Prefix: 'cloudfront-logs/'
         CustomErrorResponses:
           - ErrorCode: 404
             ResponseCode: 200
@@ -552,12 +537,6 @@ Outputs:
     Value: !Ref WebsiteBucket
     Export:
       Name: !Sub '${AppName}-WebsiteBucket'
-
-  CloudFrontLogsBucket:
-    Description: 'S3 Bucket for CloudFront logs'
-    Value: !Ref CloudFrontLogsBucket
-    Export:
-      Name: !Sub '${AppName}-CloudFrontLogsBucket'
 
   DynamoDBTable:
     Description: 'DynamoDB Table'
